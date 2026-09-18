@@ -810,6 +810,26 @@ export function setupServerApi(
 			ctx.lastModified = resource.lastModified
 			ctx.length = resource.length
 			ctx.type = resource.mimeType
+			// Graphic files are mutable — re-uploading a template replaces them in
+			// place — yet they are served from a stable URL with no version in it.
+			// With no cache directive a client may reuse its copy on a heuristic
+			// lifetime, so an updated graphic keeps rendering from a stale module
+			// for hours. Observed with OBS: its embedded browser served a cached
+			// graphic module across restarts, while the same URL in Chrome showed
+			// the corrected one.
+			//
+			// no-cache (not no-store) means "revalidate before reuse". Last-Modified
+			// is set above, so an unchanged file costs a 304 and a changed one is
+			// picked up immediately.
+			ctx.set('Cache-Control', 'no-cache')
+			// Koa does not answer conditional requests by itself, so honour the
+			// validator here: an unchanged file costs an empty 304 instead of a
+			// full transfer of every asset in the template. Last-Modified is set
+			// above, which is what ctx.fresh compares against.
+			if (ctx.fresh) {
+				ctx.status = 304
+				return
+			}
 			ctx.body = resource.readStream
 		} catch (err) {
 			return handleErrorReturn<any>(ctx, err)
