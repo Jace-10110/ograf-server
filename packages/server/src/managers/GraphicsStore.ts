@@ -55,16 +55,8 @@ export class GraphicsStoreNS {
 		throw new Error(`No OGraf manifest found in folder ${graphicsFolder}`)
 	}
 	async listGraphics(config: ConfigOptions): Promise<ServerApi.components['schemas']['GraphicListInfo'][]> {
-		// Only directories. A storage root can also contain files - macOS Finder
-		// drops a .DS_Store in any folder it has displayed. readdir() on one throws
-		// ENOTDIR, and fromFileName() throws for a name without the graphic- prefix,
-		// which took the whole namespace down with a 500 on every request.
-		const folderList = (await fs.promises.readdir(this.folderPath, { withFileTypes: true }))
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => entry.name)
-
 		const graphics: ServerApi.components['schemas']['GraphicListInfo'][] = []
-		for (const folder of folderList) {
+		for (const folder of await this.listFolders()) {
 			let id: string
 			try {
 				const o = this.fromFileName(folder)
@@ -409,13 +401,17 @@ export class GraphicsStoreNS {
 		}
 	}
 
+	static PREFIX_FILE_NAME = 'graphic-'
 	private toFileName(id: string) {
-		return `graphic-${id}`
+		return GraphicsStoreNS.PREFIX_FILE_NAME + id
+	}
+	private isFileName(filename: string): boolean {
+		return !filename.startsWith(GraphicsStoreNS.PREFIX_FILE_NAME)
 	}
 	private fromFileName(filename: string): { id: string } {
-		const m = filename.match(/graphic-(.+)/)
-		if (!m) throw new Error(`Invalid filename ${filename}`)
-		return { id: m[1] }
+		if (!this.isFileName(filename)) throw new Error(`Invalid filename ${filename}`)
+
+		return { id: filename.slice(GraphicsStoreNS.PREFIX_FILE_NAME.length) }
 	}
 	isImmutable(version: string | undefined): boolean {
 		// If the version is "0", the graphic is considered mutable
@@ -505,14 +501,7 @@ export class GraphicsStoreNS {
 	private async removeExpiredGraphics() {
 		if (this.destroyed) return
 
-		// Only directories. A storage root can also contain files - macOS Finder
-		// drops a .DS_Store in any folder it has displayed. readdir() on one throws
-		// ENOTDIR, and fromFileName() throws for a name without the graphic- prefix,
-		// which took the whole namespace down with a 500 on every request.
-		const folderList = (await fs.promises.readdir(this.folderPath, { withFileTypes: true }))
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => entry.name)
-		for (const folder of folderList) {
+		for (const folder of await this.listFolders()) {
 			const { id } = this.fromFileName(folder)
 
 			if (!(await this.isGraphicMarkedForRemoval(id))) continue
@@ -532,16 +521,25 @@ export class GraphicsStoreNS {
 		}
 	}
 
+	/**
+	 * @returns List of folders in the graphics store
+	 */
+	private async listFolders(): Promise<string[]> {
+		return (await fs.promises.readdir(this.folderPath, { withFileTypes: true }))
+			.filter(
+				(entry) =>
+					// Ensure only directories are considered.
+					// (for example, macOS Finder drops a .DS_Store in any folder it has displayed. readdir() on one throws ENOTDIR.)
+					entry.isDirectory() &&
+					// Ensure only valid graphic folder names are considered.
+					this.isFileName(entry.name)
+			)
+			.map((entry) => entry.name)
+	}
+
 	/** Find any folders that are of from the old version, and migrate them */
 	private async migrateOldFolders() {
-		// Only directories. A storage root can also contain files - macOS Finder
-		// drops a .DS_Store in any folder it has displayed. readdir() on one throws
-		// ENOTDIR, and fromFileName() throws for a name without the graphic- prefix,
-		// which took the whole namespace down with a 500 on every request.
-		const folderList = (await fs.promises.readdir(this.folderPath, { withFileTypes: true }))
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => entry.name)
-		for (const folder of folderList) {
+		for (const folder of await this.listFolders()) {
 			let fileNameIsOk = false
 			try {
 				this.fromFileName(folder)
@@ -635,16 +633,13 @@ export class GraphicsStoreNS {
 	private async listAllFiles(baseFolderPath: string): Promise<{ path: string }[]> {
 		const returnFiles: { path: string }[] = []
 		const readFiles = async (baseFolder: string, currentFolder: string) => {
-			const files = await fs.promises.readdir(path.join(baseFolder, currentFolder))
+			const files = await fs.promises.readdir(path.join(baseFolder, currentFolder), { withFileTypes: true })
 
 			await Promise.all(
 				files.map(async (file) => {
-					const filerRelativePath = path.join(currentFolder, file)
+					const filerRelativePath = path.join(currentFolder, file.name)
 
-					const fileFullPath = path.join(baseFolder, filerRelativePath)
-
-					const stat = await fs.promises.stat(fileFullPath)
-					if (stat.isDirectory()) {
+					if (file.isDirectory()) {
 						await readFiles(baseFolder, filerRelativePath)
 					} else {
 						returnFiles.push({ path: filerRelativePath })
