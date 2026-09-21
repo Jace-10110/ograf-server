@@ -105,9 +105,5 @@ export function getGraphicThumbnailUrl(serverApiUrl: string, graphicId: string, 
 		return thumbnailFile
 	}
 
-	let baseUrl = serverApiUrl.replace(/\/ograf\/v1\/?$/, '')
-	if (!baseUrl.endsWith('/')) baseUrl += '/'
-
-	const cleanLocalPath = thumbnailFile.replace(/^\/+/, '')
-	return `${baseUrl}serverApi/internal/graphics/${encodeURIComponent(graphicId)}/${cleanLocalPath}`
+	return `${serverApiUrl}graphics/${encodeURIComponent(graphicId)}/thumbnail?file=${encodeURIComponent(thumbnailFile)}` //
 }

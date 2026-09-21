@@ -1263,7 +1263,7 @@ __metadata:
     koa-bodyparser: "npm:^4.4.1"
     mime-types: "npm:^2.1.35"
     multer: "npm:^1.4"
-    ograf: "npm:1.2.0"
+    ograf: "npm:^1.2.1"
     prettier: "npm:^3.6.2"
     ts-node: "npm:^10.9.2"
     tsx: "npm:^4.21.0"
@@ -5074,10 +5074,10 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"ograf@npm:1.2.0":
-  version: 1.2.0
-  resolution: "ograf@npm:1.2.0"
-  checksum: 10c0/ba40d84993be90392d3cd17cf9f6695edcbe41c37055c72eef9edfdaffeb2a0030e66fea608b34a045f391bdac05eb647cd66969d0b9f9d7b7a66133fab835ca
+"ograf@npm:1.2.0, ograf@npm:^1.2.1":
+  version: 1.2.1
+  resolution: "ograf@npm:1.2.1"
+  checksum: 10c0/02b8630ab76ba91fd9cc09a6149cb27a03ab04b928abbe60c4836525d776994d6df7363a8c15c6ee09c46d4c38535905c761f7662404afab6c3dc3843d2ac352
   languageName: node
   linkType: hard
 

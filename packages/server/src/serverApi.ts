@@ -175,6 +175,65 @@ export function setupServerApi(
 			return handleErrorReturn(ctx, err)
 		}
 	})
+	router.get(getOgrafApiUrl('/graphics/{graphicId}/thumbnail'), async (ctx: CTX) => {
+		type Method = ServerApi.paths['/graphics/{graphicId}/thumbnail']['get']
+		try {
+			const Req = z.object({
+				parameters: z.object({
+					path: z.object({
+						graphicId: GraphicId,
+					}),
+					query: z.object({
+						file: z.string(),
+					}),
+				}),
+				requestBody: z.any(),
+			})
+
+			const request: Request<Method> = Req.parse(getRequestObject(ctx)) satisfies Request<Method> satisfies z.infer<
+				typeof Req
+			>
+
+			if (!request.parameters.query?.file) {
+				return handleReturn<any>(ctx, 400, {
+					headers: {},
+					content: {
+						'application/json': {
+							error: 'Query parameter "file" not provided',
+						},
+					},
+				})
+			}
+
+			const ns = await namespaces.getNS(ctx.params.namespaceId)
+			if (!ns) return handleNamespaceNotFound(ctx)
+
+			const thumbnail = await ns.graphicStore.getThumbnail(
+				request.parameters.path.graphicId,
+				'latest',
+				request.parameters.query.file
+			)
+
+			if (!thumbnail) {
+				return handleReturn<any>(ctx, 404, {
+					headers: {},
+					content: {
+						'application/json': {
+							error: 'File not found',
+						},
+					},
+				})
+			}
+			// Serve the file:
+			ctx.status = 200
+			ctx.lastModified = thumbnail.lastModified
+			ctx.length = thumbnail.length
+			ctx.type = thumbnail.mimeType
+			ctx.body = thumbnail.readStream
+		} catch (err) {
+			return handleErrorReturn(ctx, err)
+		}
+	})
 
 	router.get(getOgrafApiUrl('/renderers'), async (ctx: CTX) => {
 		type Method = ServerApi.paths['/renderers']['get']
@@ -450,10 +509,27 @@ export function setupServerApi(
 				})
 			}
 
+			const renderTarget = request.requestBody.content['application/json'].renderTarget
+			const graphicId = request.requestBody.content['application/json'].graphicId
+			const params = request.requestBody.content['application/json'].params
+
+			const graphicVersion = await ns.graphicStore.getLatestVersion(graphicId)
+			if (graphicVersion === undefined) {
+				return handleReturn<Method>(ctx, 404, {
+					headers: {},
+					content: {
+						'application/json': {
+							error: 'Graphic not found',
+						},
+					},
+				})
+			}
+
 			const result = await rendererRegistration.api.loadGraphic({
-				renderTarget: request.requestBody.content['application/json'].renderTarget,
-				graphicId: request.requestBody.content['application/json'].graphicId,
-				params: request.requestBody.content['application/json'].params,
+				renderTarget,
+				graphicId,
+				graphicVersion,
+				params,
 			})
 
 			return handleReturn<Method>(ctx, 200, {
@@ -781,40 +857,58 @@ export function setupServerApi(
 		}
 	})
 
-	router.get(getFullUrl(config, '/serverApi/internal/graphics/:graphicId/:localPath*'), async (ctx: CTX) => {
-		try {
-			// Note: We DO serve resources even if the Graphic is marked for removal!
+	router.get(
+		getFullUrl(config, '/serverApi/internal/graphics/:graphicId/:graphicVersion/:localPath*'),
+		async (ctx: CTX) => {
+			try {
+				// Note: We DO serve resources even if the Graphic is marked for removal!
 
-			const Req = z.object({
-				graphicId: z.string(),
-				localPath: z.string(),
-			})
-
-			const params = Req.parse(ctx.params)
-			const ns = await namespaces.getNS(ctx.params.namespaceId)
-			if (!ns) return handleNamespaceNotFound(ctx)
-			const resource = await ns.graphicStore.getGraphicResource(params.graphicId, params.localPath)
-
-			if (!resource) {
-				return handleReturn<any>(ctx, 404, {
-					headers: {},
-					content: {
-						'application/json': {
-							error: 'File not found',
-						},
-					},
+				const Req = z.object({
+					graphicId: z.string(),
+					graphicVersion: z.string(),
+					localPath: z.string(),
 				})
+
+				const params = Req.parse(ctx.params)
+
+				const graphicVersion = parseInt(params.graphicVersion, 10)
+				if (Number.isNaN(graphicVersion)) {
+					return handleReturn<any>(ctx, 400, {
+						headers: {},
+						content: {
+							'application/json': {
+								error: 'Invalid graphic version, must be a number',
+							},
+						},
+					})
+				}
+
+				const ns = await namespaces.getNS(ctx.params.namespaceId)
+				if (!ns) return handleNamespaceNotFound(ctx)
+
+				const resource = await ns.graphicStore.getGraphicResource(params.graphicId, graphicVersion, params.localPath)
+
+				if (!resource) {
+					return handleReturn<any>(ctx, 404, {
+						headers: {},
+						content: {
+							'application/json': {
+								error: 'File not found',
+							},
+						},
+					})
+				}
+				// Serve the file:
+				ctx.status = 200
+				ctx.lastModified = resource.lastModified
+				ctx.length = resource.length
+				ctx.type = resource.mimeType
+				ctx.body = resource.readStream
+			} catch (err) {
+				return handleErrorReturn<any>(ctx, err)
 			}
-			// Serve the file:
-			ctx.status = 200
-			ctx.lastModified = resource.lastModified
-			ctx.length = resource.length
-			ctx.type = resource.mimeType
-			ctx.body = resource.readStream
-		} catch (err) {
-			return handleErrorReturn<any>(ctx, err)
 		}
-	})
+	)
 	router.post(
 		getFullUrl(config, `/serverApi/internal/graphics/graphic`),
 		upload.single('graphic'),
@@ -899,6 +993,7 @@ type AnyResponse = {
 			[key: string]: unknown
 		}
 		'application/octet-stream'?: string
+		'image/jpeg'?: string
 	}
 }
 type Request<T extends AnyMethod> = {
@@ -1003,9 +1098,11 @@ type AnyMethodErrorResponse = {
 	}
 }
 function handleErrorReturn<_Method extends AnyMethodErrorResponse>(ctx: CTX, err: any): void {
+	console.error('Error, sent back to client:')
 	console.error(err)
 
 	if (err instanceof ZodError) {
+		console.error('params', ctx.params)
 		return handleReturn(ctx, 400, {
 			headers: {},
 			content: {
