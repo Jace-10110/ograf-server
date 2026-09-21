@@ -34,6 +34,7 @@ export type RenderTargetInfo = ServerApi.components['schemas']['RenderTargetInfo
 
 export interface RendererLoadGraphicPayload {
 	graphicId: string
+	graphicVersion: number
 	params: { data: unknown }
 	[vendorSpecific: VendorSpecific]: unknown
 }

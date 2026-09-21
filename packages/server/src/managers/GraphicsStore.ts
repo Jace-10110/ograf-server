@@ -56,32 +56,28 @@ export class GraphicsStoreNS {
 	}
 	async listGraphics(config: ConfigOptions): Promise<ServerApi.components['schemas']['GraphicListInfo'][]> {
 		const graphics: ServerApi.components['schemas']['GraphicListInfo'][] = []
+
 		for (const folder of await this.listFolders()) {
-			let id: string
-			try {
-				const o = this.fromFileName(folder)
-				id = o.id
-			} catch (e) {
-				console.error(e)
-				continue
-			}
+			const { id, version } = this.fromFileName(folder)
 
-			if (await this.isGraphicMarkedForRemoval(id)) continue
+			if (await this.isGraphicMarkedForRemoval(id, version)) continue
 
-			const graphicInfo = await this.getGraphicInfo(config, id)
+			const graphicInfo = await this.getGraphicInfo(config, id, version)
 			if (!graphicInfo) continue
 
 			graphics.push({
 				id: graphicInfo.graphic.id,
 				name: graphicInfo.graphic.name,
 				description: graphicInfo.graphic.description,
+				thumbnails: graphicInfo.graphic.thumbnails,
 			})
 		}
 		return graphics
 	}
 	async getGraphicInfo(
 		config: ConfigOptions,
-		id: string
+		id: string,
+		version: number | 'latest'
 	): Promise<
 		| {
 				graphic: ServerApi.components['schemas']['GraphicManifest']
@@ -89,12 +85,19 @@ export class GraphicsStoreNS {
 		  }
 		| undefined
 	> {
-		const folder = this.toFileName(id)
+		if (version === 'latest') {
+			const latestVersion = await this.getLatestVersion(id)
+			if (latestVersion === undefined) return undefined
+			version = latestVersion
+		}
+		const folderName = await this.toFileName(id, version)
+
+		const o = this.fromFileName(folderName)
 
 		// Don't list Graphics that are marked for removal:
-		if (await this.isGraphicMarkedForRemoval(id)) return undefined
+		if (await this.isGraphicMarkedForRemoval(id, o.version)) return undefined
 
-		const fullFolderPath = path.join(this.folderPath, folder)
+		const fullFolderPath = path.join(this.folderPath, folderName)
 
 		if (!(await this.fileExists(fullFolderPath))) {
 			return undefined
@@ -108,11 +111,11 @@ export class GraphicsStoreNS {
 
 		// Ensure the id match:
 		if (id !== manifest.id) {
-			console.error(`Folder name ${folder} does not match manifest id ${manifest.id}`)
+			console.error(`Folder name ${folderName} does not match manifest id ${manifest.id}`)
 			return undefined
 		}
 
-		const url = getRootUrl() + getFullUrl(config, `/serverApi/internal/graphics/${id}/`)
+		const url = getRootUrl() + getFullUrl(config, `/serverApi/internal/graphics/${o.id}/${o.version}/`)
 		const files = await this.listAllFiles(fullFolderPath)
 
 		const stat = await pStat
@@ -138,40 +141,84 @@ export class GraphicsStoreNS {
 		}
 	}
 
-	async getGraphicManifest(id: string): Promise<ServerApi.components['schemas']['GraphicManifest'] | undefined> {
-		const manifestPath = await this.findManifestFile(path.join(this.folderPath, this.toFileName(id)))
-		console.log('manifestPath', manifestPath)
-		if (!(await this.fileExists(manifestPath))) return undefined
+	// async getGraphicManifest(
+	// 	id: string,
+	// 	version: number | 'latest'
+	// ): Promise<ServerApi.components['schemas']['GraphicManifest'] | undefined> {
+	// 	if (version === 'latest') {
+	// 		const latestVersion = await this.getLatestVersion(id)
+	// 		if (latestVersion === undefined) return undefined
+	// 		version = latestVersion
+	// 	}
 
-		const graphicManifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'))
-		if (!graphicManifest) return undefined
-		return graphicManifest
-	}
+	// 	const folderName = await this.toFileName(id, version)
+	// 	if (!folderName) return undefined
+
+	// 	const manifestPath = await this.findManifestFile(path.join(this.folderPath, folderName))
+
+	// 	if (!(await this.fileExists(manifestPath))) return undefined
+
+	// 	const graphicManifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'))
+	// 	if (!graphicManifest) return undefined
+
+	// 	return graphicManifest
+	// }
 	async deleteGraphic(id: string, force: boolean | undefined): Promise<boolean> {
-		if (force) {
-			return this.actuallyDeleteGraphic(id)
-		} else {
-			return this.markGraphicForRemoval(id)
+		const graphicsToDelete = (await this.listFolders())
+			.map((folderName) => this.fromFileName(folderName))
+			.filter((o) => {
+				return o.id === id
+			})
+
+		for (const graphicToDelete of graphicsToDelete) {
+			if (force) {
+				await this.actuallyDeleteGraphic(graphicToDelete.id, graphicToDelete.version)
+			} else {
+				await this.markGraphicForRemoval(graphicToDelete.id, graphicToDelete.version)
+			}
 		}
+		return graphicsToDelete.length > 0
 	}
-	async getGraphicResource(id: string, localPath: string): Promise<ServeFile | undefined> {
+	async getGraphicResource(id: string, version: number, localPath: string): Promise<ServeFile | undefined> {
+		const folderName = await this.toFileName(id, version)
+		if (!folderName) return undefined
+
 		return this.serveFile(
 			path.join(
 				this.folderPath,
-				this.toFileName(id),
+				folderName,
 
 				localPath
 			)
 		)
 	}
+	async getThumbnail(id: string, version: number | 'latest', file: string): Promise<ServeFile | undefined> {
+		if (version === 'latest') {
+			const latestVersion = await this.getLatestVersion(id)
+
+			if (latestVersion === undefined) return undefined
+			version = latestVersion
+		}
+
+		const folderName = await this.toFileName(id, version)
+
+		if (!folderName) return undefined
+
+		return this.serveFile(
+			path.join(
+				this.folderPath,
+				folderName,
+
+				file
+			)
+		)
+	}
 
 	async uploadGraphic(ctx: CTX): Promise<void> {
-		console.log('uploadGraphic')
-
 		// Expect a zipped file that contains the Graphic
 		const file = (ctx.request as any).file
 
-		console.log('Uploaded file', file.originalname, file.size)
+		console.debug('Uploaded file', file.originalname, file.size)
 
 		if (!['application/x-zip-compressed', 'application/zip'].includes(file.mimetype)) {
 			ctx.status = 400
@@ -234,17 +281,37 @@ export class GraphicsStoreNS {
 				const manifestData = JSON.parse(manifestDataStr) as GraphicsManifest
 
 				const id = manifestData.id
+				let newVersion: number
 
-				const folderPath = path.join(this.folderPath, this.toFileName(id))
+				// if (version === 'latest') {
+				// 	const latestVersion = await this.getLatestVersion(id)
+				// 	if (latestVersion === undefined) return undefined
+				// 	version = latestVersion
+				// }
+				const oldVersion = await this.getLatestVersion(id)
+				if (oldVersion !== undefined) {
+					newVersion = oldVersion + 1
+					// Mark the old one for removal:
+					await this.markGraphicForRemoval(id, oldVersion)
+				} else {
+					newVersion = 0
+				}
+
+				const folderName = await this.toFileName(id, newVersion)
+
+				const folderPath = path.join(this.folderPath, folderName)
 
 				// Check if the Graphic already exists
 				let alreadyExists = false
 				if (await this.fileExists(folderPath)) {
 					alreadyExists = true
 
+					// That's weird, a graphic with the same ID and version already exists.
+					console.error(`Graphic with ID ${id} and version ${newVersion} already exists.`)
+
 					// Remove the graphic if it already exists:
-					await this.actuallyDeleteGraphic(id)
-					alreadyExists = false
+					// await this.actuallyDeleteGraphic(id)
+					// alreadyExists = false
 
 					// if (await this.isGraphicMarkedForRemoval(id, version)) {
 					//   // If a pre-existing graphic is marked for removal, we can overwrite it.
@@ -394,7 +461,7 @@ export class GraphicsStoreNS {
 
 	private async fileExists(filePath: string): Promise<boolean> {
 		try {
-			await fs.promises.access(filePath)
+			await fs.promises.access(filePath, fs.constants.F_OK)
 			return true
 		} catch {
 			return false
@@ -402,22 +469,48 @@ export class GraphicsStoreNS {
 	}
 
 	static PREFIX_FILE_NAME = 'graphic-'
-	private toFileName(id: string) {
-		return GraphicsStoreNS.PREFIX_FILE_NAME + id
+	private async toFileName(id: string, version: number): Promise<string> {
+		return GraphicsStoreNS.PREFIX_FILE_NAME + id + '__' + version
 	}
-	private isFileName(filename: string): boolean {
-		return !filename.startsWith(GraphicsStoreNS.PREFIX_FILE_NAME)
-	}
-	private fromFileName(filename: string): { id: string } {
-		if (!this.isFileName(filename)) throw new Error(`Invalid filename ${filename}`)
+	private isFileNameValid(filename: string): boolean {
+		if (!filename.startsWith(GraphicsStoreNS.PREFIX_FILE_NAME)) return false
 
-		return { id: filename.slice(GraphicsStoreNS.PREFIX_FILE_NAME.length) }
+		const m = filename.match(new RegExp(`${GraphicsStoreNS.PREFIX_FILE_NAME}(.+)__(\\d+)`))
+
+		if (!m) return false
+		const version = parseInt(m[2], 10)
+		if (Number.isNaN(version)) return false
+
+		return true
 	}
-	isImmutable(version: string | undefined): boolean {
-		// If the version is "0", the graphic is considered mutable
-		// ie, it is a non-production version, in development
-		// Otherwise it is considered immutable.
-		return `${version}` !== '0'
+	private fromFileName(filename: string): { id: string; version: number } {
+		if (!this.isFileNameValid(filename)) throw new Error(`Invalid filename ${filename}`)
+
+		const m = filename.match(new RegExp(`${GraphicsStoreNS.PREFIX_FILE_NAME}(.+)__(\\d+)`))
+
+		if (!m) throw new Error(`Invalid filename after regex match: ${filename}`)
+
+		const id = m[1]
+		const version = parseInt(m[2], 10)
+
+		if (Number.isNaN(version)) throw new Error(`Invalid version in filename: ${filename}`)
+
+		return { id, version }
+	}
+	async getLatestVersion(id: string): Promise<number | undefined> {
+		const versions: number[] = []
+		for (const folder of await this.listFolders()) {
+			const { id: folderId, version } = this.fromFileName(folder)
+
+			if (folderId === id) {
+				versions.push(version)
+			}
+		}
+		if (versions.length > 0) {
+			return Math.max(...versions)
+		}
+
+		return undefined
 	}
 
 	private async getFileInfo(filePath: string): Promise<
@@ -476,24 +569,28 @@ export class GraphicsStoreNS {
 		}
 	}
 
-	private async actuallyDeleteGraphic(id: string): Promise<boolean> {
-		const folderPath = path.join(this.folderPath, this.toFileName(id))
+	private async actuallyDeleteGraphic(id: string, version: number): Promise<boolean> {
+		const folderName = await this.toFileName(id, version)
+		if (!folderName) return false
 
+		const folderPath = path.join(this.folderPath, folderName)
 		if (!(await this.fileExists(folderPath))) return false
-		await fs.promises.rm(folderPath, { recursive: true })
 
+		await fs.promises.rm(folderPath, { recursive: true })
 		return true
 	}
-	private async markGraphicForRemoval(id: string): Promise<boolean> {
+	private async markGraphicForRemoval(id: string, version: number): Promise<boolean> {
 		// Mark the Graphic for removal, but keep it for a while.
 		// The reason for this is to not delete a Graphic that is currently on-air
 		// (which might break due to missing resources)
 
-		const folderPath = path.join(this.folderPath, this.toFileName(id))
+		const folderName = await this.toFileName(id, version)
+		if (!folderName) return false
+
+		const folderPath = path.join(this.folderPath, folderName)
+		if (!(await this.fileExists(folderPath))) return false
 
 		const removalFilePath = path.join(folderPath, '__markedForRemoval')
-
-		if (!(await this.fileExists(folderPath))) return false
 		await fs.promises.writeFile(removalFilePath, `${Date.now() + this.REMOVAL_WAIT_TIME}`, 'utf-8')
 		return true
 	}
@@ -502,9 +599,9 @@ export class GraphicsStoreNS {
 		if (this.destroyed) return
 
 		for (const folder of await this.listFolders()) {
-			const { id } = this.fromFileName(folder)
+			const { id, version } = this.fromFileName(folder)
 
-			if (!(await this.isGraphicMarkedForRemoval(id))) continue
+			if (!(await this.isGraphicMarkedForRemoval(id, version))) continue
 
 			const removalFilePath = path.join(this.folderPath, folder, '__markedForRemoval')
 
@@ -516,7 +613,7 @@ export class GraphicsStoreNS {
 
 			if (Date.now() > removalTime) {
 				// Time to remove the Graphic
-				await this.actuallyDeleteGraphic(id)
+				await this.actuallyDeleteGraphic(id, version)
 			}
 		}
 	}
@@ -524,53 +621,65 @@ export class GraphicsStoreNS {
 	/**
 	 * @returns List of folders in the graphics store
 	 */
-	private async listFolders(): Promise<string[]> {
-		return (await fs.promises.readdir(this.folderPath, { withFileTypes: true }))
-			.filter(
-				(entry) =>
-					// Ensure only directories are considered.
-					// (for example, macOS Finder drops a .DS_Store in any folder it has displayed. readdir() on one throws ENOTDIR.)
-					entry.isDirectory() &&
-					// Ensure only valid graphic folder names are considered.
-					this.isFileName(entry.name)
+	private async listFolders(onlyValid = true): Promise<string[]> {
+		let folderList = await fs.promises.readdir(this.folderPath, { withFileTypes: true })
+
+		// Ensure only directories are considered.
+		// (for example, macOS Finder drops a .DS_Store in any folder it has displayed. readdir() on one throws ENOTDIR.)
+		folderList = folderList.filter((entry) => entry.isDirectory())
+
+		if (onlyValid) {
+			folderList = folderList.filter((entry) =>
+				// Ensure only valid graphic folder names are considered.
+				this.isFileNameValid(entry.name)
 			)
-			.map((entry) => entry.name)
+		}
+
+		return folderList.map((entry) => entry.name)
 	}
 
 	/** Find any folders that are of from the old version, and migrate them */
 	private async migrateOldFolders() {
-		for (const folder of await this.listFolders()) {
-			let fileNameIsOk = false
-			try {
-				this.fromFileName(folder)
-				fileNameIsOk = true
-			} catch (e) {
-				if (`${e}`.match(/Invalid filename/)) {
-					fileNameIsOk = false
-				} else throw e
-			}
-			if (fileNameIsOk) continue
+		// Migrate folders
+		for (const folder of await this.listFolders(false)) {
+			if (this.isFileNameValid(folder)) continue // No need to migrate this folder
 
 			try {
+				const oldFullFolderPath = path.join(this.folderPath, folder)
+
 				// Find manifest in folder:
-				const manifestFilePath = await this.findManifestFile(path.join(this.folderPath, folder))
+
+				const manifestFilePath = await this.findManifestFile(oldFullFolderPath)
 
 				const manifest = JSON.parse(await fs.promises.readFile(manifestFilePath, 'utf8')) as GraphicsManifest
 
 				// Rename the folder using the manifest id:
-				const newFolderName = this.toFileName(manifest.id)
-				await fs.promises.rename(path.join(this.folderPath, folder), path.join(this.folderPath, newFolderName))
+				const newFolderName = await this.toFileName(manifest.id, 0) // Just pick version 0
+
+				const newFullFolderPath = path.join(this.folderPath, newFolderName)
+
+				if (await this.fileExists(newFullFolderPath)) {
+					// If there already is a new one, we'll just remove the old one:
+					await fs.promises.rm(oldFullFolderPath, { recursive: true })
+
+					console.debug(`Removed old folder "${oldFullFolderPath}" because a new one already exists`)
+				} else {
+					await fs.promises.rename(oldFullFolderPath, newFullFolderPath)
+
+					console.debug(`Migrated old folder to new folder "${oldFullFolderPath}" -> "${newFullFolderPath}"`)
+				}
 			} catch (err) {
 				if (`${err}`.match(/No OGraf manifest found/)) continue
 				else throw err
 			}
-			console.error(`Unknown folder "${folder}"`)
 		}
 	}
 
 	/** Returns true if a graphic exists (and is not marked for removal) */
-	private async isGraphicMarkedForRemoval(id: string): Promise<boolean> {
-		const removalFilePath = path.join(this.folderPath, this.toFileName(id), '__markedForRemoval')
+	private async isGraphicMarkedForRemoval(id: string, version: number): Promise<boolean> {
+		const folderPath = await this.toFileName(id, version)
+
+		const removalFilePath = path.join(this.folderPath, folderPath, '__markedForRemoval')
 		return await this.fileExists(removalFilePath)
 	}
 	private async isManifestFile(filePath: string, fileContents: Buffer | string): Promise<boolean> {
@@ -581,13 +690,12 @@ export class GraphicsStoreNS {
 		//  "$schema": "https://ograf.ebu.io/v1/specification/json-schemas/graphics/schema.json"
 		//}
 
-		// console.log("---", filePath);
 		let contentStr = undefined
 		if (fileContents instanceof Buffer) {
 			try {
 				contentStr = fileContents.toString('utf8')
 			} catch (_err) {
-				console.log(`isManifestFile "${filePath}" check failed`, _err)
+				console.error(`isManifestFile "${filePath}" check failed`, _err)
 				return false
 			}
 		} else if (typeof fileContents === 'string') {
@@ -602,7 +710,7 @@ export class GraphicsStoreNS {
 				contentStr.includes(`"${expectSchemaContent}"`)
 			)
 		) {
-			console.log(`isManifestFile "${filePath}" check failed`, 'initial content')
+			console.error(`isManifestFile "${filePath}" check failed`, 'initial content')
 			return false
 		}
 
@@ -611,7 +719,7 @@ export class GraphicsStoreNS {
 			const content = JSON.parse(contentStr)
 
 			if (content.$schema !== expectSchemaContent) {
-				console.log(`isManifestFile "${filePath}" check failed`, 'bad $schema', content.$schema, expectSchemaContent)
+				console.error(`isManifestFile "${filePath}" check failed`, 'bad $schema', content.$schema, expectSchemaContent)
 				return false
 			}
 

@@ -44,6 +44,7 @@ export class LayerHandler {
 
 	async loadGraphic(
 		graphicId: string,
+		graphicVersion: number,
 		params: {
 			data: unknown
 		}
@@ -59,7 +60,7 @@ export class LayerHandler {
 			await this.clearGraphic()
 		}
 
-		const { elementName, graphicInfo } = await this.graphicCache.loadGraphic(graphicId)
+		const { elementName, graphicInfo } = await this.graphicCache.loadGraphic(graphicId, graphicVersion)
 
 		// Add element to DOM:
 		const element = document.createElement(elementName) as HTMLElement & OGraf.GraphicsAPI.Graphic

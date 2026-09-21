@@ -99,7 +99,7 @@ export function setupServerApi(
 			const ns = await namespaces.getNS(ctx.params.namespaceId)
 			if (!ns) return handleNamespaceNotFound(ctx)
 
-			const graphicInfo = await ns.graphicStore.getGraphicInfo(config, request.parameters.path.graphicId)
+			const graphicInfo = await ns.graphicStore.getGraphicInfo(config, request.parameters.path.graphicId, 'latest')
 
 			if (!graphicInfo) {
 				return handleReturn<Method>(ctx, 404, {

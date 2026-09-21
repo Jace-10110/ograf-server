@@ -7,7 +7,10 @@ export class GraphicCache {
 		ServerApi.paths['/graphics/{graphicId}']['get']['responses']['200']['content']['application/json']
 	> = {}
 	constructor(private serverApiUrl: string) {}
-	async loadGraphic(graphicId: string): Promise<{
+	async loadGraphic(
+		graphicId: string,
+		graphicVersion: number
+	): Promise<{
 		elementName: string
 		graphicInfo: GraphicInfo
 	}> {
@@ -24,8 +27,8 @@ export class GraphicCache {
 		this.cachedGraphicInfo[graphicId] = graphicInfo
 
 		// Load the Graphic:
-		console.log(`Loading Graphic...`, graphicInfo)
-		const webComponent = await this.fetchModule(graphicId, graphicInfo.graphic)
+		console.debug(`Loading Graphic...`, graphicInfo)
+		const webComponent = await this.fetchModule(graphicId, graphicVersion, graphicInfo.graphic)
 
 		// register the web component
 		customElements.define(graphicId, webComponent)

@@ -366,6 +366,7 @@ export class RendererApiHandler implements MethodsOnRenderer {
 	async loadGraphic(params: {
 		renderTarget: unknown
 		graphicId: string
+		graphicVersion: number
 		params: {
 			data: unknown
 		}
@@ -382,7 +383,7 @@ export class RendererApiHandler implements MethodsOnRenderer {
 			throw new Error(`Layer not found: ${JSON.stringify(renderTarget)}`)
 		}
 
-		return layer.loadGraphic(params.graphicId, params.params)
+		return layer.loadGraphic(params.graphicId, params.graphicVersion, params.params)
 	}
 	/** Clear/unloads a GraphicInstance on a RenderTarget */
 	async clearGraphics(params: {
