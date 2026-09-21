@@ -14,14 +14,15 @@ export class GraphicCache {
 		elementName: string
 		graphicInfo: GraphicInfo
 	}> {
+		const elementName = getCustomElementName(graphicId)
 		// Check if the Graphic is already registered:
-		const cachedGraphic = customElements.get(graphicId)
+		const cachedGraphic = customElements.get(elementName)
 		const cachedGraphicInfo = this.cachedGraphicInfo[graphicId]
-		if (cachedGraphic && cachedGraphicInfo) return { elementName: graphicId, graphicInfo: cachedGraphicInfo }
+		if (cachedGraphic && cachedGraphicInfo) return { elementName, graphicInfo: cachedGraphicInfo }
 
-		console.log(`Loading Graphic "${graphicId}"`)
+		console.debug(`Loading Graphic "${graphicId}" - ${graphicVersion}`)
 
-		console.log(`Loading manifest...`)
+		console.debug(`Loading manifest...`)
 		const graphicInfo = await this.fetchGraphicInfo(graphicId)
 
 		this.cachedGraphicInfo[graphicId] = graphicInfo
@@ -31,10 +32,10 @@ export class GraphicCache {
 		const webComponent = await this.fetchModule(graphicId, graphicVersion, graphicInfo.graphic)
 
 		// register the web component
-		customElements.define(graphicId, webComponent)
+		customElements.define(elementName, webComponent)
 
 		return {
-			elementName: graphicId,
+			elementName,
 			graphicInfo,
 		}
 	}
@@ -55,9 +56,10 @@ export class GraphicCache {
 	}
 	async fetchModule(
 		id: string,
+		version: number,
 		manifest: ServerApi.components['schemas']['schema-2']
 	): Promise<CustomElementConstructor> {
-		const modulePath = `${this.serverApiUrl}/serverApi/internal/graphics/${id}/${manifest.main ?? 'graphic.mjs'}`
+		const modulePath = `${this.serverApiUrl}/serverApi/internal/graphics/${id}/${version}/${manifest.main ?? 'graphic.mjs'}`
 
 		// Load the Graphic module:
 		const module = await import(modulePath)
@@ -83,4 +85,9 @@ export class GraphicCache {
 
 		return module.default
 	}
+}
+
+export function getCustomElementName(graphicId: string): string {
+	// Must be a valid name, see https://developer.mozilla.org/en-US/docs/Web/API/CustomElementRegistry/define#valid_custom_element_names
+	return `ograf-${graphicId.toLocaleLowerCase().replaceAll(/[^a-z0-9]/g, '_')}`
 }
