@@ -7,6 +7,8 @@ import { clone } from '../lib/lib.js'
 import { getDefaultServerUrl } from '../lib/namespace.js'
 import { dbStore } from './db.js'
 
+export const PRELIMINARY_RENDERER_ID = 'preliminary'
+
 export type ThemeMode = 'default' | 'light' | 'dark'
 
 class AppSettings {
@@ -82,7 +84,7 @@ class AppSettings {
 
 	public getSelectedRendererId(): string | undefined {
 		// Just return the string. Looking up the renderer list here causes circular dependency before initialization
-		return this.selectedRendererId || undefined
+		return this.selectedRendererId || PRELIMINARY_RENDERER_ID
 	}
 	public getSelectedRenderer(): OGraf.ServerApi.components['schemas']['RendererInfo'] | undefined {
 		const id = this.getSelectedRendererId()

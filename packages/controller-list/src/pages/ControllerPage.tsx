@@ -3,11 +3,9 @@ import { observer } from 'mobx-react'
 import Container from '@mui/material/Container'
 import Grid from '@mui/material/Grid'
 import { appSettingsStore } from '../stores/appSettings.js'
-import { serverDataStore } from '../stores/serverData.js'
 
 import { ListPanel } from '../components/ListPanel.js'
 import { EditPanel } from '../components/EditPanel.js'
-import Typography from '@mui/material/Typography'
 
 import { GraphicsListAPI } from '../lib/graphicsListApi.js'
 
@@ -18,16 +16,6 @@ export const ControllerPage: React.FC = observer(() => {
 	React.useEffect(() => {
 		GraphicsListAPI.init()
 	}, [])
-
-	if (serverDataStore.renderersList.length === 0) {
-		return (
-			<Container sx={{ mt: 4 }}>
-				<Typography>
-					No renderers available on the server. Please check your connection or server configuration.
-				</Typography>
-			</Container>
-		)
-	}
 
 	if (!rendererSelected) {
 		return null // Wait for auto-select

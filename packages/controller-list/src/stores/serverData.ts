@@ -1,7 +1,7 @@
 import { action, autorun, computed, makeObservable, observable, ObservableMap, reaction, runInAction } from 'mobx'
 import { OgrafApi } from '../lib/ografApi.js'
 import * as OGraf from 'ograf'
-import { appSettingsStore } from './appSettings.js'
+import { appSettingsStore, PRELIMINARY_RENDERER_ID } from './appSettings.js'
 import { graphicsListStore } from './graphicsList.js'
 import { isEqual } from '../lib/lib.js'
 
@@ -75,12 +75,17 @@ class ServerData {
 				const renderer = this.renderersList[0]
 				if (
 					!appSettingsStore.selectedRendererId ||
+					appSettingsStore.selectedRendererId === PRELIMINARY_RENDERER_ID ||
 					!this.renderersList.find((r) => r.id === appSettingsStore.selectedRendererId)
 				) {
 					// Select the first renderer if none is selected or selected doesn't exist anymore:
 					runInAction(() => {
 						appSettingsStore.selectedRendererId = renderer.id
 					})
+				}
+				const selectedId = appSettingsStore.getSelectedRendererId() || renderer.id
+				if (selectedId && selectedId !== PRELIMINARY_RENDERER_ID) {
+					graphicsListStore.migratePreliminaryRenderer(selectedId)
 				}
 			}
 		})
@@ -147,7 +152,7 @@ class ServerData {
 					await this.loadGraphic(q.graphicId, typeof asap === 'string' ? asap.includes(`graphic`) : asap)
 				}
 
-				if (q.renderTarget) {
+				if (q.renderTarget && q.rendererId && q.rendererId !== PRELIMINARY_RENDERER_ID) {
 					renderTargetMap.set(`${q.rendererId}::${JSON.stringify(q.renderTarget)}`, {
 						rendererId: q.rendererId,
 						renderTarget: q.renderTarget,
@@ -169,6 +174,7 @@ class ServerData {
 			this.isConnected = this.serverInfo !== undefined
 			this.connectedStatus = this.serverInfo ? 'Connected' : 'Connection Failed'
 		})
+		this.syncLoadedStatusToGraphicsList()
 	}
 	private doIfEnoughTimeHasPassedMap = new Map<string, number>()
 	private async doIfEnoughTimeHasPassed<T>(
@@ -250,7 +256,7 @@ class ServerData {
 			rendererIdsToLoad.add(r.id)
 		}
 		const selected = appSettingsStore.getSelectedRendererId()
-		if (selected) rendererIdsToLoad.add(selected)
+		if (selected && selected !== PRELIMINARY_RENDERER_ID) rendererIdsToLoad.add(selected)
 
 		for (const rendererId of rendererIdsToLoad) {
 			await this.loadRenderer(rendererId, asap)
@@ -329,6 +335,46 @@ class ServerData {
 	removeFromGraphicsInstanceMap = action((entry: GraphicsInstanceMapEntry) => {
 		this.graphicsInstanceMap.delete(this.graphicsInstanceMapKey(entry))
 	})
+
+	public syncLoadedStatusToGraphicsList = action(() => {
+		for (const item of graphicsListStore.items) {
+			if (item.rendererId && item.rendererId !== PRELIMINARY_RENDERER_ID) {
+				const activeInstanceId = this.getGraphicInstanceId(item.rendererId, item.renderTarget, item.graphicId)
+				if (item.graphicInstanceId !== activeInstanceId) {
+					graphicsListStore.updateItemData(item.id, { graphicInstanceId: activeInstanceId })
+				}
+			}
+		}
+	})
+
+	public async refreshLoadedStatusForAllGraphics() {
+		const renderers = new Set<string>()
+		for (const r of this.renderersList) {
+			renderers.add(r.id)
+		}
+		const selected = appSettingsStore.getSelectedRendererId()
+		if (selected && selected !== PRELIMINARY_RENDERER_ID) renderers.add(selected)
+
+		for (const rendererId of renderers) {
+			await this.loadRenderer(rendererId, true)
+		}
+
+		const renderTargetMap = new Map<string, { rendererId: string; renderTarget: unknown }>()
+		for (const q of graphicsListStore.items) {
+			if (q.rendererId && q.rendererId !== PRELIMINARY_RENDERER_ID) {
+				renderTargetMap.set(`${q.rendererId}::${JSON.stringify(q.renderTarget)}`, {
+					rendererId: q.rendererId,
+					renderTarget: q.renderTarget,
+				})
+			}
+		}
+
+		for (const rt of renderTargetMap.values()) {
+			await this.loadGraphicsInstances(rt.rendererId, rt.renderTarget, true)
+		}
+
+		this.syncLoadedStatusToGraphicsList()
+	}
 }
 
 interface GraphicsInstanceMapEntry {

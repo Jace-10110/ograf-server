@@ -1,7 +1,7 @@
 import { action, makeObservable, observable, runInAction, computed, toJS, reaction } from 'mobx'
 import { dbStore } from './db.js'
 import { serverDataStore } from './serverData.js'
-import { appSettingsStore } from './appSettings.js'
+import { appSettingsStore, PRELIMINARY_RENDERER_ID } from './appSettings.js'
 import { getDefaultDataFromSchema } from 'ograf-form'
 import { clone, isEqual } from '../lib/lib.js'
 import { getNameSpaceId } from '../lib/namespace.js'
@@ -153,6 +153,7 @@ class GraphicsList {
 
 			undo: action,
 			redo: action,
+			migratePreliminaryRenderer: action,
 		})
 
 		reaction(
@@ -164,6 +165,20 @@ class GraphicsList {
 			() => {
 				if (this.isInitialized) {
 					this.saveSelectionToLocalStorage()
+				}
+			}
+		)
+
+		reaction(
+			() => ({
+				isInitialized: this.isInitialized,
+				renderersCount: serverDataStore.renderersList.length,
+				renderersInfoSize: serverDataStore.renderersInfo.size,
+				selectedRendererId: appSettingsStore.getSelectedRendererId(),
+			}),
+			({ isInitialized, renderersCount, selectedRendererId }) => {
+				if (isInitialized && renderersCount > 0 && selectedRendererId && selectedRendererId !== PRELIMINARY_RENDERER_ID) {
+					void this.migratePreliminaryRenderer(selectedRendererId)
 				}
 			}
 		)
@@ -243,6 +258,7 @@ class GraphicsList {
 				this.entries = active.entries || []
 				this.isInitialized = true
 				this.restoreSelectionFromLocalStorage()
+				void serverDataStore.refreshLoadedStatusForAllGraphics()
 			})
 		} catch (e) {
 			console.error('Error when loading graphics list from IndexedDB', e)
@@ -429,7 +445,7 @@ class GraphicsList {
 	}
 
 	public get defaultRendererId(): string {
-		return appSettingsStore.getSelectedRendererId() || serverDataStore.renderersList[0]?.id || 'default'
+		return appSettingsStore.getSelectedRendererId() || serverDataStore.renderersList[0]?.id || PRELIMINARY_RENDERER_ID
 	}
 
 	/**
@@ -687,8 +703,8 @@ class GraphicsList {
 			this.defaultRendererId
 
 		const id = generateId('item')
-		let renderer = serverDataStore.renderersInfo.get(rId)
-		if (!renderer) {
+		let renderer = rId !== PRELIMINARY_RENDERER_ID ? serverDataStore.renderersInfo.get(rId) : undefined
+		if (!renderer && rId !== PRELIMINARY_RENDERER_ID) {
 			renderer = await serverDataStore.loadRenderer(rId)
 		}
 
@@ -1649,6 +1665,64 @@ class GraphicsList {
 		if (hasMoved) {
 			this.saveListOrder().catch(console.error)
 		}
+	}
+
+	public async migratePreliminaryRenderer(targetRendererId: string) {
+		if (!targetRendererId || targetRendererId === PRELIMINARY_RENDERER_ID) return
+
+		let targetRenderer = serverDataStore.renderersInfo.get(targetRendererId)
+		if (!targetRenderer) {
+			targetRenderer = await serverDataStore.loadRenderer(targetRendererId)
+		}
+
+		const defaultTarget = targetRenderer?.renderTargetSchema
+			? getDefaultDataFromSchema(targetRenderer.renderTargetSchema)
+			: undefined
+
+		let count = 0
+		runInAction(() => {
+			for (const tab of this.tabs) {
+				const entriesList = tab.id === this.activeTabId ? this.entries : tab.entries
+				for (const entry of entriesList || []) {
+					if (isPlaybackGroup(entry)) {
+						if (entry.rendererId === PRELIMINARY_RENDERER_ID || !entry.rendererId) {
+							entry.rendererId = targetRendererId
+							count++
+						}
+						for (const item of entry.items || []) {
+							if (item.rendererId === PRELIMINARY_RENDERER_ID || !item.rendererId) {
+								item.rendererId = targetRendererId
+								count++
+							}
+							if (
+								item.rendererId === targetRendererId &&
+								(!item.renderTarget || (typeof item.renderTarget === 'object' && Object.keys(item.renderTarget).length === 0)) &&
+								defaultTarget !== undefined
+							) {
+								item.renderTarget = clone(defaultTarget)
+								count++
+							}
+						}
+					} else {
+						if (entry.rendererId === PRELIMINARY_RENDERER_ID || !entry.rendererId) {
+							entry.rendererId = targetRendererId
+							count++
+						}
+						if (
+							entry.rendererId === targetRendererId &&
+							(!entry.renderTarget || (typeof entry.renderTarget === 'object' && Object.keys(entry.renderTarget).length === 0)) &&
+							defaultTarget !== undefined
+						) {
+							entry.renderTarget = clone(defaultTarget)
+							count++
+						}
+					}
+				}
+			}
+			if (count > 0) {
+				void this.saveListOrder()
+			}
+		})
 	}
 }
 

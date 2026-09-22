@@ -13,6 +13,8 @@ import FormControl from '@mui/material/FormControl'
 import InputLabel from '@mui/material/InputLabel'
 import Select from '@mui/material/Select'
 import MenuItem from '@mui/material/MenuItem'
+import Alert from '@mui/material/Alert'
+import AlertTitle from '@mui/material/AlertTitle'
 
 import FlashOnIcon from '@mui/icons-material/FlashOn'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
@@ -31,7 +33,7 @@ import { OGrafForm } from './OGrafForm.js'
 import { GraphicsListAPI } from '../lib/graphicsListApi.js'
 import { graphicsListStore } from '../stores/graphicsList.js'
 import { serverDataStore } from '../stores/serverData.js'
-import { appSettingsStore } from '../stores/appSettings.js'
+import { appSettingsStore, PRELIMINARY_RENDERER_ID } from '../stores/appSettings.js'
 import { clone, isEqual } from '../lib/lib.js'
 
 export const EditPanel = observer(function EditPanel() {
@@ -223,6 +225,15 @@ export const EditPanel = observer(function EditPanel() {
 							</Stack>
 						)}
 					</Box>
+
+					{selectedItems.some((i) => i.rendererId === PRELIMINARY_RENDERER_ID) && (
+						<Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
+							<AlertTitle sx={{ fontSize: '0.85rem', fontWeight: 700, m: 0 }}>Preliminary Renderer</AlertTitle>
+							<Typography variant="caption" color="text.secondary">
+								One or more selected graphics are assigned to a preliminary renderer. They will be migrated automatically once a renderer connects.
+							</Typography>
+						</Alert>
+					)}
 
 					{/* Batch Actions Card */}
 					<Card sx={{ mb: 2 }} variant="outlined">
@@ -507,6 +518,15 @@ export const EditPanel = observer(function EditPanel() {
 					<Typography variant="h5" fontWeight={700} gutterBottom>
 						{singleSelectedItem.graphicId}
 					</Typography>
+
+					{singleSelectedItem.rendererId === PRELIMINARY_RENDERER_ID && (
+						<Alert severity="warning" variant="outlined" sx={{ mt: 1, mb: 1 }}>
+							<AlertTitle sx={{ fontSize: '0.85rem', fontWeight: 700, m: 0 }}>Preliminary Renderer</AlertTitle>
+							<Typography variant="caption" color="text.secondary">
+								This graphic is assigned to a preliminary renderer ID. It will migrate automatically once a renderer connects to the server.
+							</Typography>
+						</Alert>
+					)}
 					{(serverDataStore.renderersList.length > 1 ||
 						(serverDataStore.renderersList.length === 1 &&
 							singleSelectedItem.rendererId !== serverDataStore.renderersList[0].id)) && (

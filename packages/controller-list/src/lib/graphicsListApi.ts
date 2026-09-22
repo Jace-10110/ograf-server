@@ -10,6 +10,7 @@ class GraphicsListAPIClass {
 	public init() {
 		// Expose to window for easy debug or external triggers if needed
 		;(window as any).GraphicsListAPI = this
+		void serverDataStore.refreshLoadedStatusForAllGraphics()
 	}
 
 	private isBadResponse(response: any): boolean {
@@ -35,6 +36,7 @@ class GraphicsListAPIClass {
 				'Request failed'
 		}
 		graphicsListStore.showError(`${actionLabel} failed: ${message}`)
+		void serverDataStore.refreshLoadedStatusForAllGraphics()
 	}
 
 	public async clearRenderTarget(rendererId: string, renderTarget: unknown) {
@@ -229,6 +231,20 @@ class GraphicsListAPIClass {
 					graphicInstanceId: graphicInstanceId,
 					params: (item.customActionData?.[actionId] as any) || {},
 				})
+
+				if (this.isBadResponse(res) && appSettingsStore.autoLoad) {
+					const is404 =
+						res?.status === 404 ||
+						res?.content?.statusCode === 404 ||
+						JSON.stringify(res?.content || '').toLowerCase().includes('graphicinstance not found')
+
+					if (is404) {
+						console.log(`Play failed with 404 for item ${item.id} (GraphicInstance not found on Renderer). Auto-load is enabled: retrying via load and play...`)
+						graphicsListStore.updateItemData(item.id, { graphicInstanceId: undefined })
+						await this.performAction(item, 'loadplay')
+						return
+					}
+				}
 			} else if (actionId === 'stop') {
 				res = await this.ografApi.renderTargetGraphicStop(pathParams, {
 					renderTarget: item.renderTarget,
