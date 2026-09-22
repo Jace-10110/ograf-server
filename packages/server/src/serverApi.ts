@@ -664,6 +664,17 @@ export function setupServerApi(
 				},
 			})
 		} catch (err) {
+			if (`${err}`.match(/no graphicInstance/i)) {
+				return handleReturn<Method>(ctx, 404, {
+					headers: {},
+					content: {
+						'application/json': {
+							error: 'GraphicInstance not found on Renderer',
+						},
+					},
+				})
+			}
+
 			return handleErrorReturn<Method>(ctx, err)
 		}
 	})
@@ -870,7 +881,6 @@ export function setupServerApi(
 				})
 
 				const params = Req.parse(ctx.params)
-
 				const graphicVersion = parseInt(params.graphicVersion, 10)
 				if (Number.isNaN(graphicVersion)) {
 					return handleReturn<any>(ctx, 400, {
