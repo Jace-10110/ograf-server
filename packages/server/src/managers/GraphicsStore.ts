@@ -36,11 +36,24 @@ export class GraphicsStoreNS {
 		this.destroyed = true
 		if (this.checkInterVal !== undefined) clearInterval(this.checkInterVal)
 	}
-	/** Find a manifest file in a folder */
-	private async findManifestFile(graphicsFolder: string): Promise<string> {
+	/**
+	 * Find a manifest file in a folder.
+	 *
+	 * A folder MAY hold several manifest files, and the specification is explicit
+	 * that they are then "interpreted as multiple, independent Graphics" — a
+	 * package of Graphics sharing resources such as images and fonts. So the first
+	 * file readdir() happens to return is not an acceptable answer: it hands every
+	 * caller whichever Graphic sorts first, and the id check in getGraphicInfo()
+	 * then rejects the folder for every other Graphic in it.
+	 *
+	 * When the caller knows which Graphic it wants, match on the manifest id.
+	 */
+	private async findManifestFile(graphicsFolder: string, wantedId?: string): Promise<string> {
 		const files = await fs.promises.readdir(graphicsFolder, {
 			withFileTypes: true,
 		})
+
+		const candidates: string[] = []
 		for (const file of files) {
 			if (
 				file.isFile() &&
@@ -48,11 +61,27 @@ export class GraphicsStoreNS {
 					file.name.endsWith('.ograf') || // File name from 2025-06-13 to 2025-07-13
 					file.name === 'manifest.json') // Legacy, initial manifest file name
 			) {
-				return path.join(graphicsFolder, file.name)
+				candidates.push(path.join(graphicsFolder, file.name))
 			}
 		}
 
-		throw new Error(`No OGraf manifest found in folder ${graphicsFolder}`)
+		if (candidates.length === 0) {
+			throw new Error(`No OGraf manifest found in folder ${graphicsFolder}`)
+		}
+
+		if (wantedId !== undefined) {
+			for (const candidate of candidates) {
+				try {
+					const manifest = JSON.parse(await fs.promises.readFile(candidate, 'utf8')) as GraphicsManifest
+					if (manifest?.id === wantedId) return candidate
+				} catch {
+					// An unreadable or malformed manifest is not the one being looked for.
+					// It may still be the right answer for a caller that did not ask by id.
+				}
+			}
+		}
+
+		return candidates[0]
 	}
 	async listGraphics(config: ConfigOptions): Promise<ServerApi.components['schemas']['GraphicListInfo'][]> {
 		const graphics: ServerApi.components['schemas']['GraphicListInfo'][] = []
@@ -103,7 +132,9 @@ export class GraphicsStoreNS {
 			return undefined
 		}
 
-		const manifestFilePath = await this.findManifestFile(fullFolderPath)
+		// Several Graphics may share this folder, so ask for the one that was
+		// actually requested rather than whichever manifest is found first.
+		const manifestFilePath = await this.findManifestFile(fullFolderPath, id)
 
 		const pStat = fs.promises.stat(manifestFilePath)
 
